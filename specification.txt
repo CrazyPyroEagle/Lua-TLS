@@ -68,8 +68,8 @@ Other functions used, required functions are inferred
   TYPE(any) returns string - Gets the type of the given variable
 
 General message structure, where [] specifies variable data
-  CHANNEL = 65533
-  REPLY_CHANNEL = 65533
+  CHANNEL = 65532
+  REPLY_CHANNEL = 65532
   TIMEOUT_DELAY = 30000
   {
     protocol = "LTLS",

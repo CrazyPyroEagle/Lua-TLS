@@ -1,0 +1,145 @@
+    ~ LTLS 1 Specification ~
+
+Message Datatypes
+  string -> 7-bit ASCII string (LuaJ bug messes with 8-bit strings)
+  number -> IEEE-754 double, usually used like an unsigned byte
+  table -> Table defined in more detail in the Table Variables section
+  bytetable -> Big-endian table of numbers (interpreted like unsigned bytes)
+
+Global Variables
+  CHANNEL - The channel on which to transmit the message
+  REPLY_CHANNEL - The channel from which to expect a reply
+  TIMEOUT_DELAY - The number of milliseconds either side will wait before dropping the connection and deleting state-related data
+  EXPONENT - Part of the RSA public key (not to be confused with ?_Public_Key), commonly called e (c = m^e mod n)
+      -> 65537
+
+Ghost Variables (internal variables or only used to define other variables)
+  Server_Computer_ID - The ID of the server computer
+  Server_Public_Key - The server's public key
+  Authority_Computer_ID - The ID of a certificate authority computer
+  Certificate_Signature(number id) - The signature of the certificate authority whose computer ID is "id"
+      bytetable publickey, bytetable privatekey -> RSASSA-PSS-SIGN(K = {publickey, privatekey}, M = SERIALIZE(Server_Certificate))
+  Connection_ID - A connection ID. This can be public, 8 bits
+  AES_Key - A randomly generated AES key. Each session has its own, 128 bits
+  Secret_Session_ID - A randomly generated SSID. Each session has its own, 128 bits
+  Content_Type - The type of the transmitted content
+      -> TYPE(Content)
+  Receiver_Public_Key - The public key of the receiver
+
+Input Variables
+    Client & Server
+  Source_Computer_ID - The ID of the sending computer
+  Target_Computer_ID - The ID of the target computer
+  Content - The content to transmit to the receiver
+    Client
+  Authorities - A list of authority server IDs and their corresponding public keys
+  Client_Public_Key - The client's public key (commonly called n in RSA)
+  Client_Private_Key - The client's private key (commonly called d in RSA)
+    Server
+  Server_Certificate - The server certificate
+  Certificate_Signatures - A list of authority server IDs and their corresponding signature of Server_Certificate
+
+Table Variables
+    Server_Certificate
+  {
+    owner = [Server_Computer_ID, number],
+    publickey = [Server_Public_Key, bytetable]
+  }
+  
+    Certificate_Signatures
+  Enumeration {
+    key = [Authority_Computer_ID, number]
+    value = [Certificate_Signature(key), number]
+  }
+  
+Protocol functions used, required functions are inferred
+    RFC #3447
+  RSAES-OAEP-ENCRYPT (Section 7.1.1)
+  RSAES-OAEP-DECRYPT (Section 7.1.2)
+  RSASSA-PSS-SIGN (Section 8.1.1)
+  RSASSA-PSS-VERIFY (Section 8.1.2)
+    Other (those whose RFC I could not find)
+  AES-CBC-ENCRYPT (128-bit)
+  AES-CBC-DECRYPT (128-bit)
+
+Other functions used, required functions are inferred
+  SERIALIZE(table | bytetable) returns string - Converts a table or bytetable into a string
+  UNSERIALIZE(string) returns table - Converts a string into a table
+  TYPE(any) returns string - Gets the type of the given variable
+
+General message structure, where [] specifies variable data
+  CHANNEL = 65533
+  REPLY_CHANNEL = 65533
+  TIMEOUT_DELAY = 30000
+  {
+    protocol = "LTLS",
+    version = 1,
+    source = [Source_Computer_ID, number],
+    target = [Target_Computer_ID, number],
+    operation = [Operation, string]
+  }
+
+Stateless Operations, where general message details are implied
+    GET_PUBLIC_KEY (Client -> Server) | Requests the server's public key
+  Operation = "GET_PUBLIC_KEY"
+  
+    SERVER_PUBLIC_KEY (Server -> Client) | Contains the server's public key
+  Operation = "SERVER_PUBLIC_KEY"
+  {
+    content = {
+      value = [Server_Certificate, table],
+      signatures = [Certificate_Signatures, table]
+    }
+  }
+
+State-based Operations
+      State Group 1 - Session
+    REQUEST_SESSION (Client -> Server) | Requests to open a session with the server
+  Operation = "REQUEST_SESSION"
+  {
+    content = [PSAES-OAEP-ENCRYPT(n = [Server_Public_Key], M = [Client_Public_Key]), bytetable]
+  }
+  -> SESSION_ACCEPTED | ABORT_SESSION
+  
+    SESSION_ACCEPTED (Server -> Client) | Accepts the client's request
+  Operation = "SESSION_ACCEPTED"
+  {
+    content = [PSAES-OAEP-ENCRYPT(n = [Client_Public_Key], M = [Connection_ID]..[Secret_Session_ID]..[AES_Key]), bytetable]
+  }
+  -> START_SESSION | ABORT_SESSION
+  
+    ABORT_SESSION (Two-way) | Tells the other end to abort the creation of the session
+  Operation = "ABORT_SESSION"
+  {
+    content = [PSAES-OAEP-ENCRYPT(n = [Receiver_Public_Key], M = [Client_Public_Key]), bytetable]
+  }
+  
+    START_SESSION (Client -> Server) | Starts the session with the server
+  Operation = "START_SESSION"
+  {
+    content = {
+      cid = [Connection_ID, number],
+      value = [AES-CBC-ENCRYPT(key = [AES_Key], message = [Secret_Session_ID]), bytetable]
+    }
+  }
+  -> TRANSMIT | CLOSE_SESSION
+  
+    TRANSMIT (Two-way) | Transmits a message to the other end
+  Operation = "TRANSMIT"
+  {
+    content = {
+      cid = [Connection_ID, number],
+      type = [Content_Type, string],
+      value = [AES-CBC-ENCRYPT(key = [AES_Key], message = [Secret_Session_ID]..[Content]), bytetable]
+    }
+  }
+  -> TRANSMIT | CLOSE_SESSION
+  
+    CLOSE_SESSION (Two-way) | Tells the other end that the session is closed. Always the last message.
+  Operation = "CLOSE_SESSION"
+  {
+    content = {
+      cid = [Connection_ID, number],
+      value = [AES-CBC-ENCRYPT(key = [AES_Key], message = [Secret_Session_ID]), bytetable]
+    }
+  }
